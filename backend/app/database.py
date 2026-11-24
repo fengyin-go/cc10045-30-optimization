@@ -353,6 +353,102 @@ DDL_STATEMENTS = [
         daily_calls INTEGER DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )""",
+
+    # ==================== Backfill Event Ingestion Tier ====================
+    # 补录批次：外部机构每次导入一个补录文件即产生一个批次
+    """CREATE TABLE IF NOT EXISTS backfill_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_no TEXT NOT NULL UNIQUE,
+        source_org TEXT NOT NULL,
+        source_file TEXT NOT NULL,
+        file_fingerprint TEXT NOT NULL DEFAULT '',
+        shift_code TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT '部分接收',
+        total_lines INTEGER NOT NULL DEFAULT 0,
+        accepted_lines INTEGER NOT NULL DEFAULT 0,
+        rejected_lines INTEGER NOT NULL DEFAULT 0,
+        confirmed_lines INTEGER NOT NULL DEFAULT 0,
+        rejected_file_path TEXT,
+        remark TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+
+    # 补录文件逐行核对记录：保留每一行（含拒收行）的原始内容、行号和拒收原因
+    """CREATE TABLE IF NOT EXISTS backfill_lines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id INTEGER NOT NULL,
+        file_line_no INTEGER NOT NULL,
+        source_event_no TEXT NOT NULL DEFAULT '',
+        business_time TEXT NOT NULL DEFAULT '',
+        region TEXT NOT NULL DEFAULT '',
+        region_confirmed INTEGER NOT NULL DEFAULT 0,
+        person_key TEXT NOT NULL DEFAULT '',
+        event_name TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '{}',
+        line_status TEXT NOT NULL DEFAULT '待核',
+        reject_reason TEXT NOT NULL DEFAULT '',
+        accepted_event_id INTEGER,
+        raw_content TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (batch_id) REFERENCES backfill_batches(id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_bfl_batch ON backfill_lines(batch_id, file_line_no)",
+    "CREATE INDEX IF NOT EXISTS idx_bfl_status ON backfill_lines(line_status)",
+
+    # 实际接收（已确认）的补录事件：按 来源机构+来源编号 幂等，确认后只计一次
+    """CREATE TABLE IF NOT EXISTS backfill_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        batch_id INTEGER NOT NULL,
+        line_id INTEGER NOT NULL,
+        file_line_no INTEGER NOT NULL,
+        source_org TEXT NOT NULL,
+        source_event_no TEXT NOT NULL,
+        business_time TEXT NOT NULL,
+        region TEXT NOT NULL,
+        person_key TEXT NOT NULL,
+        event_name TEXT NOT NULL DEFAULT '',
+        payload TEXT NOT NULL DEFAULT '{}',
+        event_status TEXT NOT NULL DEFAULT '已确认',
+        confirmed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(source_org, source_event_no),
+        FOREIGN KEY (batch_id) REFERENCES backfill_batches(id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_bfe_batch ON backfill_events(batch_id)",
+    "CREATE INDEX IF NOT EXISTS idx_bfe_time ON backfill_events(business_time)",
+
+    # 市级估算/正式分账发布记录：可回查发布时实际采用的批次与文件行号范围
+    """CREATE TABLE IF NOT EXISTS coverage_estimates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shift_code TEXT NOT NULL,
+        estimate_kind TEXT NOT NULL DEFAULT '市级估算',
+        policy TEXT NOT NULL DEFAULT 'partial_accepted',
+        coverage_count INTEGER NOT NULL DEFAULT 0,
+        baseline_count INTEGER NOT NULL DEFAULT 0,
+        added_count INTEGER NOT NULL DEFAULT 0,
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        scope_snapshot TEXT NOT NULL DEFAULT '[]',
+        basis_text TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT '已发布',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_ce_shift ON coverage_estimates(shift_code, created_at)",
+
+    # 正式地区分账：只允许归属已确认的事件进入，逐地区留存采用的文件行号
+    """CREATE TABLE IF NOT EXISTS region_ledgers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shift_code TEXT NOT NULL,
+        region TEXT NOT NULL,
+        coverage_count INTEGER NOT NULL DEFAULT 0,
+        basis_batch_ids TEXT NOT NULL DEFAULT '[]',
+        basis_line_refs TEXT NOT NULL DEFAULT '[]',
+        estimate_id INTEGER,
+        status TEXT NOT NULL DEFAULT '正式分账',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_rl_shift_region ON region_ledgers(shift_code, region)",
 ]
 
 

@@ -11,13 +11,17 @@
 .
 ├── frontend/                 Vue 3 + Vite + TypeScript 前端
 │   ├── src/views/WorkbenchView.vue|tsx  全部模块共享工作台
+│   ├── src/views/BackfillView.vue       事件补录稳定性工作台
 │   ├── src/data/modules.ts              18个业务模块配置
 │   ├── src/api/              统一请求封装
 │   └── vite.config.ts        dev server 配置（open: false）
 ├── backend/                  FastAPI（Python） 后端
 │   ├── app/routers/resource.py  通用查询/导出/登记/动作接口
+│   ├── app/routers/backfill.py  补录导入/核对/确认/估算/分账接口
+│   ├── app/services/event_backfill.py  补录逐行核对与覆盖人数领域逻辑
 │   ├── app/services/<key>.py    每个模块独立领域逻辑
 │   ├── app/services/base.py     共享服务骨架
+│   ├── app/tests/               补录稳定性测试（unittest，无额外依赖）
 │   └── app/store.py          内存数据仓库与示例数据
 ├── .gitignore
 └── docker-compose.yml
@@ -78,6 +82,28 @@ npm run dev
   `frontend/src/domain/<模块>.ts`，用于承载真实业务差异并维持36题位容量。
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
+
+## 事件补录稳定性
+
+外部机构补录文件（CSV）经 `/api/backfill/batches/import` 导入，逐行核对**业务时间、归属、来源编号**：
+
+- **部分接收**：核对通过且归属已确认的行进入 `backfill_events`（实际接收批次）；
+  坏数据带明确原因拒收并生成拒收行文件，绝不静默置零；有候选归属但未确认的行挂「待核」。
+- **幂等只计一次**：`backfill_events` 对 `来源机构+来源编号` 加唯一约束。重复提交已确认事件按重复拒收；
+  补交仍坏的拒收行会保留原文件拒收原因；补交修正有效则允许接收且只计一次。
+- **实时聚合**：窗口覆盖人数只统计实际接收事件的去重新成员，待核/拒收行天然不参与。
+- **市级估算两种口径**：`partial_accepted`（基线 + 已核补录，如 30+9=39）与
+  `hold_baseline`（暂保旧估算 30，待核文件不计入）。基线只回溯 `policy='baseline'` 的旧估算，
+  避免重复发布时叠加。每次估算冻结采用的批次与文件行号（`scope_snapshot`），范围可回查、可重放。
+- **正式地区分账**：仅归属已确认事件可按地区出账并留存文件行号；待核/拒收行不进分账。
+- 补齐待核地区后确认，批次由「部分接收」转「整批接收」，正式核对 40 人；再传同一文件仍为 40，不会变 50。
+
+后端测试（标准库 unittest，无需安装新依赖）：
+
+```bash
+cd backend
+python -m unittest app.tests.test_event_backfill -v
+```
 
 领域：数据工程
 子方向：数据分析与数据应用

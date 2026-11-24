@@ -88,6 +88,9 @@ desktop.ini
 *.pid
 *.seed
 
+# 补录运行期数据：SQLite 库与拒收行文件
+backend/data/
+
 # BEGIN S11 LOCAL SNAPSHOT EXCLUSIONS
 **/.git/**
 **/.hg/**
